@@ -1,0 +1,50 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>{% block title %}Orbital Sentinel{% endblock %}</title>
+  <link rel="stylesheet" href="/static/style.css">
+  {% block head %}{% endblock %}
+</head>
+<body>
+  <header class="site-header">
+    <div class="header-inner">
+      <div class="header-brand">
+        <span class="brand-icon">⬡</span>
+        <div>
+          <div class="brand-title">ORBITAL SENTINEL</div>
+          <div class="brand-sub">Space Domain Awareness Brief Generator</div>
+        </div>
+      </div>
+      <nav class="header-nav">
+        <a href="/">Dashboard</a>
+        {% if not demo_mode %}
+        <form action="/refresh" method="post" style="display:inline">
+          <button type="submit" class="btn btn-outline btn-sm">↻ Refresh CDMs</button>
+        </form>
+        {% endif %}
+        <span class="mode-badge {% if demo_mode %}badge-demo{% else %}badge-live{% endif %}">
+          {% if demo_mode %}DEMO MODE{% else %}LIVE{% endif %}
+        </span>
+      </nav>
+    </div>
+  </header>
+
+  {% if demo_mode %}
+  <div class="demo-banner">
+    DEMO MODE — Conjunction data is pre-seeded for demonstration. Live data requires Space-Track.org credentials.
+  </div>
+  {% endif %}
+
+  <main class="site-main">
+    {% block content %}{% endblock %}
+  </main>
+
+  <footer class="site-footer">
+    <span>Data source: 18th Space Defense Squadron (Space-Track.org)</span>
+    <span>Orbital Sentinel &nbsp;·&nbsp; github.com/JakPot42/orbital-sentinel</span>
+    <span>UNCLASSIFIED // DEMO ONLY</span>
+  </footer>
+</body>
+</html>

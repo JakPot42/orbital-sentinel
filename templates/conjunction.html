@@ -1,0 +1,158 @@
+{% extends "base.html" %}
+{% block title %}{{ conj.sat1_name }} × {{ conj.sat2_name }} — Orbital Sentinel{% endblock %}
+
+{% block head %}
+<script src="https://cdn.plot.ly/plotly-2.26.0.min.js"></script>
+{% endblock %}
+
+{% block content %}
+<div class="page-header">
+  <div>
+    <a href="/" class="back-link">← Dashboard</a>
+    <h1>{{ conj.sat1_name }} <span class="x-sep">×</span> {{ conj.sat2_name }}</h1>
+    <p class="page-sub">
+      CDM {{ conj.cdm_id }} &nbsp;·&nbsp;
+      TCA: {{ conj.tca.strftime('%Y-%m-%d %H:%M UTC') }} &nbsp;·&nbsp;
+      T-{{ "%.1f" | format(tca_hours) }}h
+    </p>
+  </div>
+  <span class="risk-badge risk-{{ conj.risk_level | lower }} risk-badge-lg">{{ conj.risk_level }}</span>
+</div>
+
+<!-- Summary cards -->
+<div class="card-grid card-grid-4">
+  <div class="stat-card">
+    <div class="stat-card-label">Miss Distance</div>
+    <div class="stat-card-val {% if conj.miss_distance_km < 1 %}text-alert{% endif %}">
+      {% if conj.miss_distance_km < 1 %}
+        {{ "%.0f m" | format(conj.miss_distance_km * 1000) }}
+      {% else %}
+        {{ "%.3f km" | format(conj.miss_distance_km) }}
+      {% endif %}
+    </div>
+  </div>
+  <div class="stat-card">
+    <div class="stat-card-label">Probability of Collision</div>
+    <div class="stat-card-val">{{ conj.pc | format_pc }}</div>
+  </div>
+  <div class="stat-card">
+    <div class="stat-card-label">Relative Speed</div>
+    <div class="stat-card-val">{{ "%.2f km/s" | format(conj.relative_speed_km_s) }}</div>
+  </div>
+  <div class="stat-card">
+    <div class="stat-card-label">Risk Score</div>
+    <div class="stat-card-val">{{ "%.0f" | format(conj.risk_score) }} / 100</div>
+  </div>
+</div>
+
+<!-- Object info -->
+<div class="card-grid card-grid-2" style="margin-top:16px">
+  <div class="obj-card obj-card-1">
+    <div class="obj-card-header">Object 1</div>
+    <div class="obj-card-name">{{ conj.sat1_name }}</div>
+    <div class="obj-card-meta">NORAD {{ conj.sat1_norad }} &nbsp;·&nbsp; {{ conj.sat1_type | obj_type }}</div>
+    {% if alt1 %}<div class="obj-card-meta">Altitude ~{{ "%.0f" | format(alt1) }} km</div>{% endif %}
+    {% if period1 %}<div class="obj-card-meta">Period ~{{ "%.1f" | format(period1) }} min</div>{% endif %}
+  </div>
+  <div class="obj-card obj-card-2">
+    <div class="obj-card-header">Object 2</div>
+    <div class="obj-card-name">{{ conj.sat2_name }}</div>
+    <div class="obj-card-meta">NORAD {{ conj.sat2_norad }} &nbsp;·&nbsp; {{ conj.sat2_type | obj_type }}</div>
+    {% if alt2 %}<div class="obj-card-meta">Altitude ~{{ "%.0f" | format(alt2) }} km</div>{% endif %}
+    {% if period2 %}<div class="obj-card-meta">Period ~{{ "%.1f" | format(period2) }} min</div>{% endif %}
+  </div>
+</div>
+
+<!-- 3D Orbital Visualization -->
+<div class="section-card" style="margin-top:20px">
+  <div class="section-card-header">
+    <span>3D Orbital Geometry</span>
+    <span class="section-card-sub">Orbital tracks shown for 1.5 periods &nbsp;·&nbsp; Diamond markers = TCA position &nbsp;·&nbsp; Yellow line = miss distance</span>
+  </div>
+  <div id="orbital-plot"></div>
+</div>
+
+<script>
+  var plotData = {{ plot_json | safe }};
+  Plotly.newPlot('orbital-plot', plotData.data, plotData.layout, {
+    responsive: true,
+    displayModeBar: true,
+    modeBarButtonsToRemove: ['toImage'],
+    displaylogo: false
+  });
+</script>
+
+<!-- SDA Brief -->
+<div class="section-card" style="margin-top:20px">
+  <div class="section-card-header">
+    <span>SDA Brief</span>
+    <div class="brief-actions">
+      {% if brief %}
+      <a href="/conjunction/{{ conj.cdm_id }}/pdf" class="btn btn-outline btn-sm">⬇ Download PDF</a>
+      {% endif %}
+      <button id="generate-btn" class="btn btn-primary btn-sm"
+              onclick="generateBrief('{{ conj.cdm_id }}')">
+        {% if brief %}↻ Regenerate Brief{% else %}Generate SDA Brief{% endif %}
+      </button>
+    </div>
+  </div>
+
+  <div id="brief-container">
+    {% if brief %}
+      {% for section in ["SITUATION", "ORBITAL ENVIRONMENT", "CONJUNCTION ASSESSMENT",
+                         "DEFENSE & OPERATIONAL EXPOSURE", "WATCH ITEMS"] %}
+        {% if brief.get(section) %}
+        <div class="brief-section">
+          <div class="brief-section-title">{{ section }}</div>
+          <div class="brief-section-body">
+            {% if section == "WATCH ITEMS" %}
+              {% for line in brief[section].split('\n') %}
+                {% set stripped = line.strip().lstrip('•-·').strip() %}
+                {% if stripped %}<p class="brief-bullet">• {{ stripped }}</p>{% endif %}
+              {% endfor %}
+            {% else %}
+              {% for para in brief[section].split('\n\n') %}
+                {% if para.strip() %}<p>{{ para.strip() }}</p>{% endif %}
+              {% endfor %}
+            {% endif %}
+          </div>
+        </div>
+        {% endif %}
+      {% endfor %}
+    {% else %}
+    <div class="brief-empty">
+      Click "Generate SDA Brief" to produce a Claude-authored Space Domain Awareness assessment for this conjunction event.
+    </div>
+    {% endif %}
+  </div>
+
+  <div id="brief-status" class="brief-status"></div>
+</div>
+
+<script>
+async function generateBrief(cdmId) {
+  const btn = document.getElementById('generate-btn');
+  const status = document.getElementById('brief-status');
+  btn.disabled = true;
+  btn.textContent = 'Generating…';
+  status.textContent = 'Calling Claude Haiku for SDA brief generation…';
+  status.className = 'brief-status brief-status-info';
+
+  try {
+    const resp = await fetch(`/conjunction/${cdmId}/brief`, { method: 'POST' });
+    if (!resp.ok) {
+      const err = await resp.json();
+      throw new Error(err.detail || 'Generation failed');
+    }
+    status.textContent = 'Brief generated — reloading…';
+    status.className = 'brief-status brief-status-ok';
+    setTimeout(() => window.location.reload(), 800);
+  } catch (e) {
+    status.textContent = 'Error: ' + e.message;
+    status.className = 'brief-status brief-status-error';
+    btn.disabled = false;
+    btn.textContent = 'Retry';
+  }
+}
+</script>
+{% endblock %}

@@ -1,0 +1,103 @@
+{% extends "base.html" %}
+{% block title %}Orbital Sentinel — SDA Dashboard{% endblock %}
+
+{% block content %}
+<div class="page-header">
+  <div>
+    <h1>Active Conjunctions</h1>
+    <p class="page-sub">Next 72-hour window &nbsp;·&nbsp; Updated {{ now }}</p>
+  </div>
+  <div class="stat-pills">
+    <div class="stat-pill">
+      <span class="stat-num">{{ total }}</span>
+      <span class="stat-label">Tracked</span>
+    </div>
+    <div class="stat-pill stat-pill-alert">
+      <span class="stat-num">{{ high_count }}</span>
+      <span class="stat-label">High / Critical</span>
+    </div>
+  </div>
+</div>
+
+{% if conjunctions %}
+<div class="table-wrap">
+  <table class="data-table">
+    <thead>
+      <tr>
+        <th>Risk</th>
+        <th>Object 1</th>
+        <th>Object 2</th>
+        <th>TCA (UTC)</th>
+        <th>T-minus</th>
+        <th>Miss Distance</th>
+        <th>Rel. Speed</th>
+        <th>Pc</th>
+        <th>Score</th>
+        <th></th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for conj, hours in conjunctions %}
+      <tr class="row-{{ conj.risk_level | lower }}">
+        <td>
+          <span class="risk-badge risk-{{ conj.risk_level | lower }}">{{ conj.risk_level }}</span>
+        </td>
+        <td>
+          <div class="obj-name">{{ conj.sat1_name }}</div>
+          <div class="obj-meta">{{ conj.sat1_type | obj_type }} · NORAD {{ conj.sat1_norad }}</div>
+        </td>
+        <td>
+          <div class="obj-name">{{ conj.sat2_name }}</div>
+          <div class="obj-meta">{{ conj.sat2_type | obj_type }} · NORAD {{ conj.sat2_norad }}</div>
+        </td>
+        <td class="mono">{{ conj.tca.strftime('%Y-%m-%d %H:%M') }}</td>
+        <td class="mono {% if hours < 24 %}text-alert{% endif %}">
+          {{ "T-%.1f h" | format(hours) if hours > 0 else "PAST" }}
+        </td>
+        <td class="mono">
+          {% if conj.miss_distance_km < 1 %}
+            <strong>{{ "%.0f m" | format(conj.miss_distance_km * 1000) }}</strong>
+          {% else %}
+            {{ "%.2f km" | format(conj.miss_distance_km) }}
+          {% endif %}
+        </td>
+        <td class="mono">{{ "%.2f km/s" | format(conj.relative_speed_km_s) }}</td>
+        <td class="mono">{{ conj.pc | format_pc }}</td>
+        <td>
+          <div class="score-bar-wrap">
+            <div class="score-bar score-{{ conj.risk_level | lower }}"
+                 style="width:{{ conj.risk_score }}%"></div>
+            <span class="score-num">{{ "%.0f" | format(conj.risk_score) }}</span>
+          </div>
+        </td>
+        <td>
+          <a href="/conjunction/{{ conj.cdm_id }}" class="btn btn-primary btn-sm">
+            View →
+          </a>
+        </td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+
+<div class="table-note">
+  Pc thresholds: &nbsp;
+  <span class="risk-badge risk-critical">CRITICAL</span> ≥ 1×10⁻³ &nbsp;
+  <span class="risk-badge risk-high">HIGH</span> ≥ 1×10⁻⁴ &nbsp;
+  <span class="risk-badge risk-medium">MEDIUM</span> ≥ 1×10⁻⁵ &nbsp;
+  <span class="risk-badge risk-low">LOW</span> &lt; 1×10⁻⁵
+  &nbsp;·&nbsp; Source: Space Force operational standards
+</div>
+
+{% else %}
+<div class="empty-state">
+  <p>No active conjunctions in the 72-hour window.</p>
+  {% if not demo_mode %}
+  <form action="/refresh" method="post">
+    <button type="submit" class="btn btn-primary">Fetch from Space-Track</button>
+  </form>
+  {% endif %}
+</div>
+{% endif %}
+{% endblock %}
