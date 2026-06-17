@@ -2,9 +2,13 @@
 Tests for the Space-Track client.
 
 No real HTTP calls — all API responses are mocked.
+Field names reflect actual cdm_public schema (confirmed 2026-06-17):
+  MIN_RNG (meters), PC, SAT_1_ID, SAT_1_NAME, SAT_2_ID, SAT_2_NAME.
+  TCA is ISO format: "2026-06-17T20:47:03.722000"
+  No TLE lines in cdm_public — injected separately via gp class.
 """
 
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timezone
 from unittest.mock import patch, MagicMock
 
 import pytest
@@ -39,17 +43,27 @@ class TestBuildCdmUrl:
         url = _build_cdm_url(now)
         assert "cdm_public" in url
         assert "TCA" in url
-        assert "MISS_DISTANCE" in url
 
-    def test_contains_miss_distance_filter(self):
+    def test_contains_min_rng_filter(self):
         now = datetime(2024, 1, 1, 0, 0, 0, tzinfo=timezone.utc)
         url = _build_cdm_url(now)
-        assert "MISS_DISTANCE" in url
+        assert "MIN_RNG" in url
+
+    def test_threshold_in_meters(self):
+        now = datetime(2024, 1, 1, 0, 0, 0, tzinfo=timezone.utc)
+        url = _build_cdm_url(now)
+        # MISS_DISTANCE_THRESHOLD_KM=5.0 → 5000 metres in the URL
+        assert "5000" in url
 
     def test_contains_json_format(self):
         now = datetime(2024, 1, 1, 0, 0, 0, tzinfo=timezone.utc)
         url = _build_cdm_url(now)
         assert "json" in url.lower()
+
+    def test_no_miss_distance_column(self):
+        now = datetime(2024, 1, 1, 0, 0, 0, tzinfo=timezone.utc)
+        url = _build_cdm_url(now)
+        assert "MISS_DISTANCE" not in url
 
 
 # ---------------------------------------------------------------------------
@@ -60,20 +74,15 @@ class TestParseCdm:
     def _raw(self, **overrides):
         base = {
             "CDM_ID": "12345678",
-            "TCA": "2024-01-02 12:00:00",
-            "MISS_DISTANCE": "0.287",
-            "RELATIVE_SPEED": "11.42",
-            "COLLISION_PROBABILITY": "2.3e-4",
-            "SAT1_OBJECT_DESIGNATOR": "44935",
-            "SAT1_OBJECT_NAME": "STARLINK-1547",
+            "TCA": "2024-01-02T12:00:00.000000",  # ISO format as returned by Space-Track
+            "MIN_RNG": "287",                       # metres (not km)
+            "PC": "2.3e-4",
+            "SAT_1_ID": "44935",
+            "SAT_1_NAME": "STARLINK-1547",
             "SAT1_OBJECT_TYPE": "PAYLOAD",
-            "SAT1_TLE_LINE1": "1 44935U 19074AV  24001.5 .00003103 00000-0 25440-3 0  9993",
-            "SAT1_TLE_LINE2": "2 44935  53.0534 283.5720 0001430  88.9780 271.1580 15.063986141215",
-            "SAT2_OBJECT_DESIGNATOR": "33801",
-            "SAT2_OBJECT_NAME": "COSMOS 2251 DEB",
+            "SAT_2_ID": "33801",
+            "SAT_2_NAME": "COSMOS 2251 DEB",
             "SAT2_OBJECT_TYPE": "DEBRIS",
-            "SAT2_TLE_LINE1": "1 33801U 93036AH  24001.5 .00001234 00000-0 12500-3 0  9994",
-            "SAT2_TLE_LINE2": "2 33801  74.0200  45.0120 0050000  90.0000 270.0120 14.289000002345",
         }
         base.update(overrides)
         return base
@@ -87,8 +96,8 @@ class TestParseCdm:
         result = parse_cdm(self._raw())
         assert result["cdm_id"] == "12345678"
 
-    def test_miss_distance_float(self):
-        result = parse_cdm(self._raw())
+    def test_miss_distance_converted_to_km(self):
+        result = parse_cdm(self._raw(MIN_RNG="287"))
         assert isinstance(result["miss_distance_km"], float)
         assert abs(result["miss_distance_km"] - 0.287) < 1e-9
 
@@ -98,11 +107,11 @@ class TestParseCdm:
         assert abs(result["pc"] - 2.3e-4) < 1e-10
 
     def test_pc_null_becomes_none(self):
-        result = parse_cdm(self._raw(COLLISION_PROBABILITY=None))
+        result = parse_cdm(self._raw(PC=None))
         assert result["pc"] is None
 
     def test_pc_empty_string_becomes_none(self):
-        result = parse_cdm(self._raw(COLLISION_PROBABILITY=""))
+        result = parse_cdm(self._raw(PC=""))
         assert result["pc"] is None
 
     def test_tca_is_datetime(self):
@@ -113,24 +122,49 @@ class TestParseCdm:
         result = parse_cdm(self._raw())
         assert result["tca"].tzinfo is not None
 
+    def test_tca_iso_format_with_microseconds(self):
+        result = parse_cdm(self._raw(TCA="2026-06-17T20:47:03.722000"))
+        assert result is not None
+        assert result["tca"].hour == 20
+        assert result["tca"].minute == 47
+
+    def test_sat1_norad_from_sat_1_id(self):
+        result = parse_cdm(self._raw())
+        assert result["sat1_norad"] == "44935"
+
+    def test_sat2_norad_from_sat_2_id(self):
+        result = parse_cdm(self._raw())
+        assert result["sat2_norad"] == "33801"
+
     def test_sat_names_stripped(self):
-        result = parse_cdm(self._raw(SAT1_OBJECT_NAME="  STARLINK-1547  "))
+        result = parse_cdm(self._raw(**{"SAT_1_NAME": "  STARLINK-1547  "}))
         assert result["sat1_name"] == "STARLINK-1547"
+
+    def test_sat2_name(self):
+        result = parse_cdm(self._raw())
+        assert result["sat2_name"] == "COSMOS 2251 DEB"
 
     def test_object_type_uppercased(self):
         result = parse_cdm(self._raw(SAT1_OBJECT_TYPE="payload"))
         assert result["sat1_type"] == "PAYLOAD"
 
-    def test_missing_miss_distance_returns_none(self):
-        result = parse_cdm(self._raw(MISS_DISTANCE=None))
+    def test_tle_fields_empty_strings(self):
+        result = parse_cdm(self._raw())
+        assert result["sat1_tle1"] == ""
+        assert result["sat1_tle2"] == ""
+        assert result["sat2_tle1"] == ""
+        assert result["sat2_tle2"] == ""
+
+    def test_missing_min_rng_returns_none(self):
+        result = parse_cdm(self._raw(MIN_RNG=None))
         assert result is None
 
     def test_invalid_tca_returns_none(self):
         result = parse_cdm(self._raw(TCA="not-a-date"))
         assert result is None
 
-    def test_relative_speed_default_zero(self):
-        result = parse_cdm(self._raw(RELATIVE_SPEED=None))
+    def test_relative_speed_always_zero(self):
+        result = parse_cdm(self._raw())
         assert result is not None
         assert result["relative_speed_km_s"] == 0.0
 
@@ -172,4 +206,26 @@ class TestFetchCdmsMockedHttp:
             mock_ctx.post.return_value = mock_resp
 
             with pytest.raises(SpaceTrackError, match="login failed"):
+                fetch_cdms()
+
+    def test_space_track_error_response_raises(self):
+        """Space-Track returns [{"error":"..."}] for bad column names."""
+        login_resp = MagicMock()
+        login_resp.status_code = 200
+        login_resp.text = ""
+
+        cdm_resp = MagicMock()
+        cdm_resp.status_code = 200
+        cdm_resp.json.return_value = [{"error": "COLUMN [miss_distance] DOES NOT EXIST"}]
+
+        with patch("spacetrack_client.SPACETRACK_USER", "u"), \
+             patch("spacetrack_client.SPACETRACK_PASS", "p"), \
+             patch("httpx.Client") as mock_client_cls:
+            mock_ctx = MagicMock()
+            mock_client_cls.return_value.__enter__ = lambda s: mock_ctx
+            mock_client_cls.return_value.__exit__ = MagicMock(return_value=False)
+            mock_ctx.post.return_value = login_resp
+            mock_ctx.get.return_value = cdm_resp
+
+            with pytest.raises(SpaceTrackError, match="query error"):
                 fetch_cdms()
